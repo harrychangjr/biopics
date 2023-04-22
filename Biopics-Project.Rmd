@@ -1,0 +1,423 @@
+---
+title: "EDA on Biopics Dataset"
+author: "Harry Chang"
+date: "2023-04-21"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+setwd("/Users/harrychang/Desktop/Data Analyst Assessments/Grab")
+biopics = read.csv("biopics.csv")
+```
+
+```{r}
+library(tidyverse) # For data manipulation and visualization
+library(lubridate) # For handling date and time
+library(stringr)   # For handling strings
+```
+
+```{r}
+biopics ## Load dataset
+```
+
+## Data pre-processing
+
+```{r}
+biopics <- biopics %>%
+  mutate(across(everything(), replace_na, "Unknown")) # Replace NA values with "Unknown"
+
+biopics
+```
+
+```{r}
+biopics <- biopics %>%
+  mutate(
+    person_of_color = as.factor(person_of_color), # Convert to factor
+    subject_sex = as.factor(subject_sex)
+  ) 
+
+biopics
+```
+
+```{r}
+convert_box_office <- function(x) {
+  x <- gsub(",", "", x) # Remove commas
+  x <- gsub("\\$", "", x) # Remove dollar sign
+  
+  # If the value is in millions, replace "M" with "e6" (scientific notation)
+  x <- ifelse(str_detect(x, "M"), str_replace(x, "M", "e6"), x)
+  
+  # If the value is in thousands, replace "K" with "e3" (scientific notation)
+  x <- ifelse(str_detect(x, "K"), str_replace(x, "K", "e3"), x)
+  
+  # Convert to numeric and handle non-numeric values
+  as.numeric(gsub("-", "NA", x))
+}
+```
+
+```{r}
+biopics <- biopics %>%
+  mutate(
+    box_office = convert_box_office(box_office)
+  )
+
+biopics
+```
+
+```{r}
+biopics <- biopics %>%
+  mutate(
+    box_office = ifelse(is.na(box_office), -1, box_office) # Replace NA with a specific value (e.g., -1) or use any other imputation technique
+  )
+
+biopics
+```
+
+## Sample Visualizations
+
+```{r}
+ggplot(biopics, aes(x = box_office)) +
+  geom_histogram(binwidth = 1e6, fill = "blue", color = "black") +
+  scale_x_continuous(labels = scales::comma) +
+  labs(title = "Box Office Distribution", x = "Box Office", y = "Frequency")
+```
+
+```{r}
+ggplot(biopics, aes(x = year_release)) +
+  geom_bar(fill = "blue", color = "black") +
+  labs(title = "Number of Biopics per Year", x = "Release Year", y = "Count")
+```
+
+```{r}
+ggplot(biopics, aes(x = country)) +
+  geom_bar(fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Number of Biopics per Country", x = "Country", y = "Count")
+```
+
+```{r}
+ggplot(biopics, aes(x = type_of_subject)) +
+  geom_bar(fill = "red") +
+  coord_flip() +
+  labs(title = "Number of Biopics by Type of Subject", x = "Type of Subject", y = "Count")
+```
+
+```{r}
+ggplot(biopics, aes(x = subject_race)) +
+  geom_bar(fill = "green") +
+  coord_flip() +
+  labs(title = "Number of Biopics by Subject Race", x = "Subject Race", y = "Count")
+```
+
+```{r}
+ggplot(biopics, aes(x = subject_sex)) +
+  geom_bar(fill = "orange") +
+  labs(title = "Number of Biopics by Subject Sex", x = "Subject Sex", y = "Count")
+```
+
+```{r}
+top_directors <- biopics %>%
+  count(director, sort = TRUE) %>%
+  head(10) %>%
+  pull(director)
+
+ggplot(filter(biopics, director %in% top_directors), aes(x = director)) +
+  geom_bar(fill = "purple") +
+  coord_flip() +
+  labs(title = "Number of Biopics by Top 10 Directors", x = "Director", y = "Count")
+
+```
+
+```{r}
+ggplot(biopics, aes(x = subject_sex, y = box_office)) +
+  geom_boxplot(fill = "brown") +
+  scale_y_continuous(labels = scales::comma) +
+  coord_flip()+
+  labs(title = "Box Office by Subject Sex", x = "Subject Sex", y = "Box Office")
+```
+
+## Linear Regression to Predict Box Office Revenue
+
+```{r}
+# Load required library
+library(caret)
+
+biopics[] <- lapply(biopics, function(x) {
+  if (is.character(x)) {
+    x <- enc2utf8(x)
+  }
+  return(x)
+})
+
+# Load required library
+library(janitor)
+
+# Clean the column names
+biopics <- clean_names(biopics)
+
+# Define preprocessing steps
+preProcess_steps <- c("center", "scale", "nzv")
+
+# Create preprocessing object
+preProcess_obj <- preProcess(biopics, method = preProcess_steps)
+
+# Apply preprocessing to the whole dataset
+biopics_preprocessed <- predict(preProcess_obj, biopics)
+
+# Create a dummyVars object
+dummy_obj <- dummyVars(~ ., data = biopics_preprocessed, fullRank = TRUE)
+
+# Create dummy variables using the dummyVars object
+biopics_dummy <- data.frame(predict(dummy_obj, newdata = biopics_preprocessed))
+
+set.seed(42)
+splitIndex <- createDataPartition(biopics_dummy$box_office, p = 0.8, list = FALSE)
+train_df <- biopics_dummy[splitIndex, ]
+test_df <- biopics_dummy[-splitIndex, ]
+
+linear_model <- lm(box_office ~ ., data = train_df)
+
+# Predict the test set
+predictions <- predict(linear_model, newdata = test_df)
+
+# Calculate performance metrics
+RMSE <- sqrt(mean((test_df$box_office - predictions)^2))
+R_squared <- cor(test_df$box_office, predictions)^2
+```
+
+```{r}
+RMSE
+R_squared
+```
+
+## Random Forest
+
+```{r}
+library(randomForest)
+
+# Train the random forest model
+random_forest_model <- randomForest(box_office ~ ., data = train_df, ntree = 500, importance = TRUE)
+
+# Predict the test set
+random_forest_predictions <- predict(random_forest_model, newdata = test_df)
+
+# Calculate performance metrics
+random_forest_RMSE <- sqrt(mean((test_df$box_office - random_forest_predictions)^2))
+random_forest_R_squared <- cor(test_df$box_office, random_forest_predictions)^2
+```
+
+```{r}
+random_forest_RMSE
+random_forest_R_squared
+```
+
+## SVM
+
+```{r}
+library(e1071)
+
+# Train the SVM model
+svm_model <- svm(box_office ~ ., data = train_df, kernel = "radial", cost = 10, gamma = 0.1)
+
+# Predict the test set
+svm_predictions <- predict(svm_model, newdata = test_df)
+
+# Calculate performance metrics
+svm_RMSE <- sqrt(mean((test_df$box_office - svm_predictions)^2))
+svm_R_squared <- cor(test_df$box_office, svm_predictions)^2
+```
+
+```{r}
+svm_RMSE
+svm_R_squared
+```
+
+```{r}
+# Create a data frame with performance metrics
+performance_metrics <- data.frame(
+  Model = c("Linear Regression", "Random Forest", "SVM"),
+  RMSE = c(RMSE, random_forest_RMSE, svm_RMSE),
+  R_squared = c(R_squared, random_forest_R_squared, svm_R_squared)
+)
+
+# Print the performance metrics
+print(performance_metrics)
+```
+
+Based on the above, it seems that SVM is the optimal model due to its lowest RMSE value and highest R-squared score.
+
+## K-means clustering
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(cluster)
+```
+
+```{r}
+# Select numeric columns for clustering
+numeric_cols <- c("year_release", "box_office", "number_of_subjects")
+data_numeric <- biopics[, numeric_cols]
+
+# Scale the numeric features
+scaled_data <- scale(data_numeric)
+```
+
+```{r}
+# Determine the optimal number of clusters using the elbow method
+wss <- c()
+for (i in 1:15) {
+  kmeans_model <- kmeans(scaled_data, centers=i, nstart=25)
+  wss[i] <- kmeans_model$tot.withinss
+}
+
+# Plot the elbow method results
+plot(1:15, wss, type="b", xlab="Number of clusters", ylab="Within groups sum of squares", main="Elbow Method")
+
+```
+
+```{r}
+# Choose the optimal number of clusters (k) based on the elbow method
+k <- 4 # Replace with your choice based on the elbow method plot
+
+# Perform k-means clustering with the optimal number of clusters
+kmeans_model <- kmeans(scaled_data, centers=k, nstart=25)
+
+# Visualize the clustering results (using PCA for dimensionality reduction)
+pca <- prcomp(scaled_data, center = TRUE, scale. = TRUE)
+pca_data <- data.frame(pca$x[, 1:2])
+pca_data$cluster <- as.factor(kmeans_model$cluster)
+
+# Plot the PCA results with cluster assignments
+ggplot(pca_data, aes(x=PC1, y=PC2, color=cluster)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title="K-means Clustering (PCA Visualization)", x="PC1", y="PC2")
+```
+
+## Logistic regression
+
+```{r}
+# Load required libraries
+library(caret)
+library(pROC)
+
+# Select relevant columns for the classification problem
+selected_cols <- c("year_release", "box_office", "number_of_subjects", "person_of_color")
+data_selected <- biopics[, selected_cols]
+```
+
+```{r}
+# Split the data into training (80%) and testing (20%) sets
+set.seed(123)
+train_indices <- createDataPartition(data_selected$person_of_color, p = 0.8, list = FALSE)
+train_data <- data_selected[train_indices, ]
+test_data <- data_selected[-train_indices, ]
+
+# Train a logistic regression model
+logit_model <- glm(person_of_color ~ ., data = train_data, family = "binomial")
+
+# Make predictions on the testing set
+predictions_prob <- predict(logit_model, newdata = test_data, type = "response")
+predictions <- ifelse(predictions_prob > 0.5, 1, 0)
+
+# Calculate evaluation metrics
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$person_of_color)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+```
+
+```{r}
+confusion_matrix
+```
+
+```{r}
+# Load required libraries for precision, recall, and F1 score
+library(MLmetrics)
+
+precision <- Precision(predictions, test_data$person_of_color)
+recall <- Recall(predictions, test_data$person_of_color)
+f1_score <- F1_Score(predictions, test_data$person_of_color)
+
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+```
+
+```{r}
+# Plot the ROC curve
+roc_obj <- roc(test_data$person_of_color, predictions_prob)
+plot(roc_obj, main = "ROC Curve")
+```
+
+## Content-based recommendation system
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+# Select relevant columns for the recommendation system
+selected_cols <- c("title", "type_of_subject", "subject_race", "subject_sex")
+data_selected <- biopics[, selected_cols]
+```
+
+```{r}
+# Convert categorical variables to dummy variables
+data_dummies <- data_selected %>%
+  mutate(across(type_of_subject:subject_sex, as.factor)) %>%
+  pivot_wider(names_from = type_of_subject:subject_sex, values_from = type_of_subject:subject_sex,
+              values_fill = 0, values_fn = length) %>%
+  column_to_rownames("title")
+```
+
+```{r}
+# Calculate the similarity between movies using the cosine similarity
+cosine_similarity <- function(x, y) {
+  return(sum(x * y) / (sqrt(sum(x^2)) * sqrt(sum(y^2))))
+}
+```
+
+```{r}
+#install.packages("proxy")
+library(proxy)
+
+# Calculate the similarity matrix using the proxy package
+similarity_matrix <- 1 - proxy::dist(data_dummies, method = "cosine")
+```
+
+```{r}
+recommend_movies <- function(movie_data, similarity_matrix, movie_title, top_n = 10) {
+  # Find the index of the given movie_title
+  movie_index <- which(movie_data$title == movie_title)
+  
+  # Check if the movie is found in the dataset
+  if (length(movie_index) == 0) {
+    stop("Movie not found in the dataset.")
+  }
+  
+  # Get similarity scores
+  similarity_scores <- similarity_matrix[movie_index]
+  
+  # Get the indices of the top_n most similar movies
+  top_movie_indices <- order(similarity_scores, decreasing = TRUE)[1:(top_n + 1)] # +1 because the movie itself will be in the list
+  
+  # Remove the original movie from the list
+  top_movie_indices <- top_movie_indices[top_movie_indices != movie_index]
+  
+  # Return the titles of the top_n most similar movies
+  return(movie_data[top_movie_indices, "title"])
+}
+```
+
+```{r}
+# Test the recommend_movies function
+recommended_movies <- recommend_movies(movie_data = biopics, similarity_matrix = similarity_matrix, movie_title = "12 Years a Slave", top_n = 5)
+print(recommended_movies)
+```
+
