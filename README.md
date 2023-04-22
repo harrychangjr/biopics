@@ -9,3 +9,5 @@ Methods explored on dataset:
 - Regression methods to predict box office revenue (linear regression, random forest, SVM)
 - K-means clustering with PCA to identify similar types of movies
 - Content-based recommendation system using cosine similarity to recommend similar movies based on input title
+
+Full project also available here: https://rpubs.com/harrychangjr/biopics
